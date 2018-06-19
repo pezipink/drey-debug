@@ -36,25 +36,39 @@ namespace DreyZ
         {
             GetProgram,
             StepInto,
+            StepOut,
+            StepOver,
             Run,
-            EmulateResponse
+            EmulateResponse,
+            SetBreakpoint,
+            ClearBreakpoint
         }
 
-
-        public class DataEventArgs : EventArgs
+        public abstract class DreyEventArgs
+        { }
+        public class DataEventArgs : DreyEventArgs
         {
             public string Data;
         }
 
-        public class GetProgramEventArgs : DataEventArgs
+        public class GetProgramEventArgs : DreyEventArgs
         {
             public DreyProgram Program;
         }
-        public class AnnounceEventArgs : DataEventArgs
+        public class DebugMessageEventArgs : DreyEventArgs
+        {
+            public string Message;
+        }
+        public class BreakPointEventArgs : DreyEventArgs
+        {
+            public int Address;
+            public bool Set;
+        }
+        public class AnnounceEventArgs : DreyEventArgs
         {
             public GameState State;
         }
-        public delegate void DataArivedEventHandler(DataEventArgs args);
+        public delegate void DataArivedEventHandler(DreyEventArgs args);
         public event DataArivedEventHandler DataArrived;
 
         private MachineState _state = MachineState.Disconnected;
@@ -66,7 +80,7 @@ namespace DreyZ
         private bool _finished;
 
         private int _outgoingMessageId = 0;
-        
+
         public GameState GameState { get; private set; }
 
         public ZMQMailbox()
@@ -110,7 +124,7 @@ namespace DreyZ
             _socket.TrySend(ref msg, TimeSpan.FromMilliseconds(100), false);
             _state = MachineState.Registered;
 #if DEBUG
-            GetProgramData();
+            //GetProgramData();
 #endif
         }
 
@@ -133,10 +147,18 @@ namespace DreyZ
                     return string.Format("{{\"id\":{0},\"type\":\"get-program\"}}", _outgoingMessageId++);
                 case DebugMessageType.StepInto:
                     return string.Format("{{\"id\":{0},\"type\":\"step-into\"}}", _outgoingMessageId++);
+                case DebugMessageType.StepOver:
+                    return string.Format("{{\"id\":{0},\"type\":\"step-over\"}}", _outgoingMessageId++);
+                case DebugMessageType.StepOut:
+                    return string.Format("{{\"id\":{0},\"type\":\"step-out\"}}", _outgoingMessageId++);
                 case DebugMessageType.Run:
                     return string.Format("{{\"id\":{0},\"type\":\"run\"}}", _outgoingMessageId++);
                 case DebugMessageType.EmulateResponse:
                     return string.Format("{{\"id\":{0},\"type\":\"emulate-response\"{1} }}", _outgoingMessageId++, extra);
+                case DebugMessageType.SetBreakpoint:
+                    return string.Format("{{\"id\":{0},\"type\":\"set-breakpoint\"{1} }}", _outgoingMessageId++, extra);
+                case DebugMessageType.ClearBreakpoint:
+                    return string.Format("{{\"id\":{0},\"type\":\"clear-breakpoint\"{1} }}", _outgoingMessageId++, extra);
             }
 
             return "";
@@ -151,9 +173,24 @@ namespace DreyZ
 
         public void EmulateClientReponse(string client, string response)
         {
-            // this isn;t very nice. change this design later!
-            var msg = CreateDebugMessage(DebugMessageType.EmulateResponse, string.Format(",\"clientid\":\"{0}\",\"key\":\"{1}\"",client,response));
+            // this isn't very nice. change this design later!
+            var msg = CreateDebugMessage(DebugMessageType.EmulateResponse, string.Format(",\"clientid\":\"{0}\",\"key\":\"{1}\"", client, response));
             SendDebugMessage(msg);
+        }
+
+        public void Breakpoint(int address, bool set)
+        {
+            // this isn't very nice. change this design later!
+            if (set)
+            {
+                var msg = CreateDebugMessage(DebugMessageType.SetBreakpoint, string.Format(",\"address\":{0}", address));
+                SendDebugMessage(msg);
+            }
+            else
+            {
+                var msg = CreateDebugMessage(DebugMessageType.ClearBreakpoint, string.Format(",\"address\":{0}", address));
+                SendDebugMessage(msg);
+            }
         }
 
         public void StepInto()
@@ -162,6 +199,16 @@ namespace DreyZ
             SendDebugMessage(msg);
         }
 
+        public void StepOut()
+        {
+            var msg = CreateDebugMessage(DebugMessageType.StepOut);
+            SendDebugMessage(msg);
+        }
+        public void StepOver()
+        {
+            var msg = CreateDebugMessage(DebugMessageType.StepOver);
+            SendDebugMessage(msg);
+        }
         public void Run()
         {
             var msg = CreateDebugMessage(DebugMessageType.Run);
@@ -173,7 +220,7 @@ namespace DreyZ
             var msg = new NetMQ.NetMQMessage();
             msg.Append(new byte[] { 6 });
             msg.Append(json);
-            _socket.SendMultipartMessage(msg);            
+            _socket.SendMultipartMessage(msg);
         }
 #endif
         public void MessagePoll()
@@ -192,7 +239,7 @@ namespace DreyZ
                         if (_socket.TryReceive(ref msg, TimeSpan.FromMilliseconds(1)))
                         {
                             string text = System.Text.Encoding.ASCII.GetString(msg.Data);
-                            if(text == "{}")
+                            if (text == "{}")
                             {
                                 break;
                             }
@@ -203,14 +250,35 @@ namespace DreyZ
                                 GameState.Program = DreyProgram.FromJson(jo);
                                 DataArrived?.Invoke(new GetProgramEventArgs() { Program = GameState.Program });
                             }
-                            else if(type == "announce")
+                            else if (type == "announce")
                             {
-                                //Console.WriteLine(text);
-                                var deserialized = JsonConvert.DeserializeObject<GameState>(text,  new ObjectTypeDeserializer());
+                                var deserialized = JsonConvert.DeserializeObject<GameState>(text, new ObjectTypeDeserializer());
                                 GameState.Announce(deserialized);
-                                DataArrived?.Invoke(new AnnounceEventArgs() { State= GameState});
+                                DataArrived?.Invoke(new AnnounceEventArgs() { State = GameState });
                             }
-                           
+                            else if (type == "set-breakpoint")
+                            {
+                                var address = jo["address"].Value<int>();
+                                GameState.Breakpoints.Add(address);
+                                DataArrived?.Invoke(new BreakPointEventArgs() { Address = address, Set = true });
+                            }
+                            else if (type == "clear-breakpoint")
+                            {
+                                var address = jo["address"].Value<int>();
+                                GameState.Breakpoints.Remove(address);
+                                DataArrived?.Invoke(new BreakPointEventArgs() { Address = address, Set = false });
+                            }
+                            else if( type == "debug-msg")
+                            {
+                                var msg2 = jo["message"].Value<string>();
+                                DataArrived?.Invoke(new DebugMessageEventArgs() { Message = msg2 });
+                            }
+                            else if (type == "debug-msg-line")
+                            {
+                                var msg3 = jo["message"].Value<string>();
+                                DataArrived?.Invoke(new DebugMessageEventArgs() { Message = msg3 + Environment.NewLine });
+                            }
+
                         }
                         break;
 

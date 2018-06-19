@@ -24,6 +24,7 @@ namespace drey_remote_debug
         public static Form1 MainForm { get; set; }
         public static List<DockContent> DockContents = new List<DockContent>();
         public static ZMQMailbox ZMB = new ZMQMailbox();
+        public static ZMQMailbox ZMB2 = new ZMQMailbox();
         public static IList<ContextContent> ContextContentDataSource
         {
             get
@@ -117,6 +118,28 @@ namespace drey_remote_debug
             main.BeginInvoke(new Action(() => main.UpdateLatestStep(state)));
         }
 
+
+        internal static void Breakpoint(int address, bool set)
+        {
+            foreach (var dock in DockContents)
+            {
+                if (dock is DisassemblyGridContent d)
+                {
+                    dock.BeginInvoke(new Action(() => d.Breakpoint(address,set)));
+                }
+            }            
+        }
+
+        internal static void DebugMessage(string message)
+        {
+            foreach (var dock in DockContents)
+            {
+                if (dock is DebugOutputContent d)
+                {
+                    dock.BeginInvoke(new Action(() => d.AppendText(message)));
+                }
+            }
+        }
         internal static ContextMenuStrip PopulateContextMenuItems(ContextMenuStrip ctx, object obj, bool clear = true)
         {
             if (ctx == null)
@@ -128,10 +151,28 @@ namespace drey_remote_debug
             {
                 ctx.Items.Clear();
             }
+
             if (obj is KeyValuePair<string, ObjectType> kvp)
             {
                 obj = kvp.Value;
             }
+
+            if (obj is KeyValuePair<string, GameObjectReference> kvp4)
+            {
+                obj = ZMB.GameState.GameObjectLookup[kvp4.Value.ID];
+            }
+
+            if(obj is GameObjectReference gor)
+            {
+                obj = ZMB.GameState.GameObjectLookup[gor.ID];
+            }
+
+            if (obj is KeyValuePair<int, GameObject> kvp2)
+            {
+                obj = kvp2.Value;
+            }
+
+         
 
             if (obj is ContextContent.ContextWrapper cw)
             {
@@ -146,6 +187,9 @@ namespace drey_remote_debug
             if (obj is Scope
                || obj is List<Scope>
                || obj is PendingChoice
+               || obj is GameObject
+               || obj is IntValue
+               || obj is StringValue
                || obj is List<ObjectType>
                || obj is Function)
             {
@@ -245,6 +289,8 @@ namespace drey_remote_debug
             ret.Add(item);
             return ret.ToArray();
         }
+
+        
     }
 
 
@@ -259,12 +305,14 @@ namespace drey_remote_debug
             InitializeComponent();
             DebuggerUI.MainForm = this;
             this.IsMdiContainer = true;
+            this.Width = 1500;
 
             var menu = new MainMenu();
             this.Menu = menu;
             var server = new MenuItem("Server");
             menu.MenuItems.Add(server);
             var connect = new MenuItem("Connect");
+            connect.Click += Connect_Click;
             var getProgram = new MenuItem("Get Program");
             server.MenuItems.Add(connect);
             server.MenuItems.Add(getProgram);
@@ -273,9 +321,10 @@ namespace drey_remote_debug
             var view = new MenuItem("View");
             menu.MenuItems.Add(view);
 
-            var viewDisass = new MenuItem("Disassembly");
-            view.MenuItems.Add(viewDisass);
-            viewDisass.Click += ViewDisass_Click;
+            var viewOutput = new MenuItem("Debug Output");
+            view.MenuItems.Add(viewOutput);
+            viewOutput.Click += ViewOutput_Click;
+
 
             var viewStrings = new MenuItem("String Table");
             view.MenuItems.Add(viewStrings);
@@ -301,6 +350,15 @@ namespace drey_remote_debug
             debug.MenuItems.Add(stepInto);
             stepInto.Click += StepInto_Click;
 
+            var stepOver = new MenuItem("Step Over");
+            stepOver.Shortcut = Shortcut.F10;
+            debug.MenuItems.Add(stepOver);
+            stepOver.Click += StepOver_Click;
+
+            var stepOut = new MenuItem("Step Out");
+            stepOut .Shortcut = Shortcut.ShiftF11;
+            debug.MenuItems.Add(stepOut);
+            stepOut.Click += StepOut_Click;
 
             this.dockPanel = new WeifenLuo.WinFormsUI.Docking.DockPanel
             {
@@ -313,17 +371,40 @@ namespace drey_remote_debug
             context.Show(this.dockPanel, DockState.Document);
             var tree = new MachineTreeContent();
             tree.Show(this.dockPanel, DockState.DockRight);
+
+            var output = new DebugOutputContent();
+            output.Show(this.dockPanel, DockState.Document);
             //this.WindowState = FormWindowState.Maximized;
             this.dockPanel.DockLeftPortion = 0.3;
             DebuggerUI.DockContents.Add(grid);
             DebuggerUI.DockContents.Add(context);
+            DebuggerUI.DockContents.Add(output);
             DebuggerUI.DockContents.Add(tree);
             DebuggerUI.UpdateContextDataSources();
             DebuggerUI.ZMB.DataArrived += _mb_DataArrived;
             DebuggerUI.ZMB.SetIdentity("__DEBUG__");
             DebuggerUI.ZMB.Connect("tcp://localhost:5560");
+            Thread.Sleep(500);
+            DebuggerUI.ZMB.GetProgramData();
 
+        }
 
+        private void ViewOutput_Click(object sender, EventArgs e)
+        {
+            var dock = new DebugOutputContent();
+            DebuggerUI.DockContents.Add(dock);
+            DebuggerUI.UpdateContextDataSources();
+            dock.Show(this.dockPanel, DockState.Float);
+        }
+
+        private void StepOut_Click(object sender, EventArgs e)
+        {
+            DebuggerUI.ZMB.StepOut();
+        }
+
+        private void StepOver_Click(object sender, EventArgs e)
+        {
+            DebuggerUI.ZMB.StepOver();
         }
 
         private void Run_Click(object sender, EventArgs e)
@@ -368,7 +449,14 @@ namespace drey_remote_debug
 
         private void Connect_Click(object sender, EventArgs e)
         {
+            DebuggerUI.ZMB2.SetIdentity("__DEBUG__2");
+            DebuggerUI.ZMB2.Connect("tcp://localhost:5560");
+            DebuggerUI.ZMB2.DataArrived += ZMB_DataArrived;
+        }
 
+        private void ZMB_DataArrived(ZMQMailbox.DreyEventArgs args)
+        {
+            
         }
 
         private void GetProgram_Click(object sender, EventArgs e)
@@ -376,15 +464,23 @@ namespace drey_remote_debug
             DebuggerUI.ZMB.GetProgramData();
         }
 
-        private void _mb_DataArrived(ZMQMailbox.DataEventArgs args)
+        private void _mb_DataArrived(ZMQMailbox.DreyEventArgs args)
         {
-            if (args is ZMQMailbox.GetProgramEventArgs)
+            if (args is ZMQMailbox.GetProgramEventArgs gp)
             {
-                DebuggerUI.UpdateProgram(((ZMQMailbox.GetProgramEventArgs)args).Program);
+                DebuggerUI.UpdateProgram(gp.Program);
             }
-            else if (args is ZMQMailbox.AnnounceEventArgs)
+            else if (args is ZMQMailbox.AnnounceEventArgs aa)
             {
-                DebuggerUI.UpdateAnnounce(((ZMQMailbox.AnnounceEventArgs)args).State);
+                DebuggerUI.UpdateAnnounce(aa.State);
+            }
+            else if(args is ZMQMailbox.BreakPointEventArgs bp)
+            {
+                DebuggerUI.Breakpoint(bp.Address, bp.Set);
+            }
+            else if (args is ZMQMailbox.DebugMessageEventArgs dm)
+            {
+                DebuggerUI.DebugMessage(dm.Message);
             }
         }
     }

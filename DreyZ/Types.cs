@@ -12,11 +12,11 @@ namespace DreyZ
         int ID { get; set; }
     }
 
-    
+
     public class PendingChoice
     {
-        public string Header { get; set; }        
-        public Dictionary<string,string> Choices { get; set; }
+        public string Header { get; set; }
+        public Dictionary<string, string> Choices { get; set; }
         public int FiberId { get; set; }
     }
 
@@ -32,7 +32,10 @@ namespace DreyZ
     {
 
     }
-
+    public class Hash : ObjectType
+    {
+        public Dictionary<string, ObjectType> Values { get; set; }
+    }
     public class Function : ObjectType
     {
         public int Address { get; set; }
@@ -59,9 +62,9 @@ namespace DreyZ
         public Dictionary<string, ObjectType> Props { get; set; }
     }
 
-    public class GameObjectReference : ObjectType , IKey
+    public class GameObjectReference : ObjectType, IKey
     {
-        public int ID { get; set; }       
+        public int ID { get; set; }
     }
 
     public class ObjectTypeDeserializer : JsonCreationConverter<ObjectType>
@@ -72,10 +75,12 @@ namespace DreyZ
             switch (type)
             {
                 case "function": return new Function();
-                case "go": return new GameObjectReference();
+                case "go*": return new GameObjectReference();
+                case "go": return new GameObject();
                 case "array": return new Array();
                 case "int": return new IntValue();
                 case "string": return new StringValue();
+                case "hash": return new Hash();
             }
             return null;
         }
@@ -83,7 +88,7 @@ namespace DreyZ
 
     public class Universe
     {
-        public Dictionary<int, GameObject> GameObjects { get; set; }
+        public Hash GameObjects { get; set; }
         public Dictionary<int, Location> Locations { get; set; }
         public Dictionary<int, LocationReference> LocationReferences { get; set; }
 
@@ -97,7 +102,7 @@ namespace DreyZ
         public string Operand { get; set; }
     }
 
-    public class Scope 
+    public class Scope
     {
         public Dictionary<string, ObjectType> Locals { get; set; }
         public int Is_Fiber { get; set; }
@@ -105,7 +110,7 @@ namespace DreyZ
     }
 
 
-    public class ExecutionContext :  IKey
+    public class ExecutionContext : IKey
     {
         public int ID { get; set; }
         public int PC { get; set; }
@@ -113,23 +118,23 @@ namespace DreyZ
         public List<ObjectType> EvalStack { get; set; }
     }
 
-    public class Fiber :  IKey
+    public class Fiber : IKey
     {
         public int ID { get; set; }
         public List<ExecutionContext> Exec_Contexts { get; set; }
         public int Response_Type { get; set; }
         public string Waiting_Client { get; set; }
-        public PendingChoice Waiting_Data { get; set; }        
+        public PendingChoice Waiting_Data { get; set; }
     }
 
     public class MatchResults<T> where T : IKey
     {
-        public class Pair { public T Old; public T New;  }
+        public class Pair { public T Old; public T New; }
         public List<T> ToAdd { get; set; }
         public List<T> ToRemove { get; set; }
         public List<Pair> ToUpdate { get; set; }
 
-        public static MatchResults<T> MatchData(List<T> oldItems, List<T> newItems) 
+        public static MatchResults<T> MatchData(List<T> oldItems, List<T> newItems)
         {
             var newD = newItems.ToDictionary(x => x.ID);
             var oldD = oldItems.ToDictionary(x => x.ID);
@@ -161,7 +166,7 @@ namespace DreyZ
         }
     }
 
-    
+
 
     public class DreyProgram
     {
@@ -286,10 +291,15 @@ namespace DreyZ
         public DreyProgram Program;
         public List<Fiber> Fibers { get; set; }
         public ExecDetails ExecDetails;
+        public List<GameObject> GameObjects { get; set; }
+        public Dictionary<int,GameObject> GameObjectLookup { get; set; }
+        public HashSet<int> Breakpoints = new HashSet<int>();
+        // end debug only
+
         public GameState()
         {
             Fibers = new List<Fiber>();
-
+            GameObjectLookup = new Dictionary<int, GameObject>();
         }
         public void Announce(GameState newState)
         {
@@ -317,19 +327,73 @@ namespace DreyZ
                 }
 
                 this.ExecDetails = newState.ExecDetails;
+
+
+                var newLookup = newState.GameObjects.ToDictionary(x => x.ID);
+                foreach(var kvp in newLookup)
+                {
+                    if(!GameObjectLookup.ContainsKey(kvp.Key))
+                    {
+                        GameObjectLookup.Add(kvp.Key, kvp.Value);
+                    }
+                    else
+                    {
+                        UpdateGo(GameObjectLookup[kvp.Key], kvp.Value);
+                    }
+                }
+                List<int> toRemove = new List<int>();
+                foreach(var kvp in GameObjectLookup)
+                {
+                    if(!newLookup.ContainsKey(kvp.Key))
+                    {
+                        toRemove.Add(kvp.Key);
+                    }
+                }
+                foreach(var key in toRemove)
+                {
+                    GameObjectLookup.Remove(key);
+                }
+
+            }
+        }
+
+        private void UpdateGo(GameObject existingGo, GameObject newGo)
+        {
+            foreach (var kvp in newGo.Props)
+            {
+                if (!existingGo.Props.ContainsKey(kvp.Key))
+                {
+                    existingGo.Props.Add(kvp.Key, kvp.Value);
+                }
+                else
+                {
+                    existingGo.Props[kvp.Key] = newGo.Props[kvp.Key];
+                }
+            }
+            List<string> toRemove = new List<string>();
+            foreach (var kvp in existingGo.Props)
+            {
+                if (!newGo.Props.ContainsKey(kvp.Key))
+                {
+                    toRemove.Add(kvp.Key);
+                }
+            }
+            foreach (var key in toRemove)
+            {
+                existingGo.Props.Remove(key);
             }
         }
 
         private void UpdateFiber(Fiber oldF, Fiber newF)
         {
-            if(oldF.Waiting_Data==null)
+            if (oldF.Waiting_Data == null)
             {
                 oldF.Waiting_Data = new PendingChoice() { Choices = new Dictionary<string, string>(), Header = "" };
             }
             oldF.Response_Type = newF.Response_Type;
             oldF.Waiting_Client = newF.Waiting_Client;
-            
-            if(newF.Waiting_Data == null)
+
+            if (newF.Waiting_Data == null)
             {
                 oldF.Waiting_Data.Choices.Clear();
                 oldF.Waiting_Data.Header = "";
@@ -339,13 +403,13 @@ namespace DreyZ
                 oldF.Waiting_Data.FiberId = newF.Waiting_Data.FiberId;
                 oldF.Waiting_Data.Header = newF.Waiting_Data.Header;
                 oldF.Waiting_Data.Choices.Clear();
-                foreach(var c in newF.Waiting_Data.Choices)
+                foreach (var c in newF.Waiting_Data.Choices)
                 {
                     oldF.Waiting_Data.Choices.Add(c.Key, c.Value);
                 }
 
             }
-            
+
             var res = MatchResults<ExecutionContext>.MatchData(oldF.Exec_Contexts, newF.Exec_Contexts);
 
             var keys = res.ToRemove.ToDictionary(x => x.ID);
@@ -372,15 +436,15 @@ namespace DreyZ
         {
             old.PC = @new.PC;
 
-            
+
             // eval stack
 
             old.EvalStack.Clear();
-            foreach(var item in @new.EvalStack)
+            foreach (var item in @new.EvalStack)
             {
                 old.EvalStack.Add(item);
             }
-            
+
             //scopes 
 
 
@@ -396,9 +460,9 @@ namespace DreyZ
                     s1.Return_Address = s2.Return_Address;
                 }
             }
-            else if(old.Scopes.Count > @new.Scopes.Count)
+            else if (old.Scopes.Count > @new.Scopes.Count)
             {
-                for (int i = old.Scopes.Count - 1; i >= 0; i--)                
+                for (int i = old.Scopes.Count - 1; i >= 0; i--)
                 {
                     if (i < @new.Scopes.Count)
                     {
@@ -423,7 +487,7 @@ namespace DreyZ
                         Scope s1 = old.Scopes[i];
                         Scope s2 = @new.Scopes[i];
                         s1.Is_Fiber = s2.Is_Fiber;
-                        UpdateLocalsDict(s1.Locals,s2.Locals);
+                        UpdateLocalsDict(s1.Locals, s2.Locals);
                         s1.Return_Address = s2.Return_Address;
                     }
                     else
@@ -437,9 +501,9 @@ namespace DreyZ
 
         private void UpdateLocalsDict(Dictionary<string, ObjectType> old, Dictionary<string, ObjectType> @new)
         {
-            foreach(var d in @new)
+            foreach (var d in @new)
             {
-                if(old.ContainsKey(d.Key))
+                if (old.ContainsKey(d.Key))
                 {
                     old[d.Key] = d.Value;
                 }
@@ -449,14 +513,14 @@ namespace DreyZ
                 }
             }
             var toRemove = new List<string>();
-            foreach(var d in old)
+            foreach (var d in old)
             {
-                if(!@new.ContainsKey(d.Key))
+                if (!@new.ContainsKey(d.Key))
                 {
                     toRemove.Add(d.Key);
                 }
             }
-            foreach(var k in toRemove)
+            foreach (var k in toRemove)
             {
                 old.Remove(k);
             }

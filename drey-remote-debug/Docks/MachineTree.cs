@@ -15,6 +15,7 @@ namespace drey_remote_debug.Docks
         private TreeNode _machineNode;
         private TreeNode _fibersNode;
         private TreeNode _universeNode;
+        private TreeNode _objectsNode;
 
         public MachineTreeContent()
         {
@@ -30,6 +31,9 @@ namespace drey_remote_debug.Docks
 
             _universeNode = new TreeNode("Universe");
             _machineNode.Nodes.Add(_universeNode);
+
+            _objectsNode = new TreeNode("All Objects") { Tag = DebuggerUI.ZMB.GameState.GameObjectLookup };
+            _machineNode.Nodes.Add(_objectsNode);
 
             _tree.ExpandAll();
             _tree.Dock = DockStyle.Fill;

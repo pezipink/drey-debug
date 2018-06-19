@@ -288,11 +288,14 @@ let createUi (inbox:MailboxProcessor<DebugMessageType>) =
     let rootNode = new TreeNode("Drey")
     let machinesNode = new TreeNode("Machines")
     let machine0 = new TreeNode("Machine 0")
+    let evalStack0 = new TreeNode("Eval Stack")
+    let closureScopes0 = new TreeNode("Closure Scopes")
     rootNode.Nodes.Add(machinesNode) |> ignore
     machinesNode.Expand()
     machinesNode.Nodes.Add machine0 |> ignore
     tree.Nodes.Add rootNode      |> ignore
-    
+    machine0.Nodes.Add evalStack0
+    machine0.Nodes.Add closureScopes0
     let universeNode = new TreeNode("Universe")
     let gameObjectsNode = new TreeNode("Game Objects")
     let locationsNode = new TreeNode("Locations")
@@ -426,8 +429,16 @@ let createUi (inbox:MailboxProcessor<DebugMessageType>) =
     stepIntoItem.Shortcut <- Shortcut.F11
     let stepOutItem = new MenuItem("Step Out")
     stepOutItem.Shortcut <- Shortcut.ShiftF10
+
+    let runItem = new MenuItem("Run")
+    runItem.Shortcut <- Shortcut.F5
+
     gotoItem.Shortcut <- Shortcut.CtrlG
 
+    runItem.Click 
+    |> Event.add(fun args ->
+        inbox.Post(Run)
+    )
     stepIntoItem.Click 
     |> Event.add(fun args ->
         inbox.Post(Step)
@@ -440,6 +451,7 @@ let createUi (inbox:MailboxProcessor<DebugMessageType>) =
         
         )
     
+    debugMenu.MenuItems.Add runItem |> ignore
     debugMenu.MenuItems.Add stepOverItem |> ignore
     debugMenu.MenuItems.Add stepIntoItem |> ignore
     debugMenu.MenuItems.Add stepOutItem  |> ignore
@@ -543,3 +555,6 @@ mb.Post(InstallNewMessageHandler handleMessage)
 
 f.Show()
 f.Show()
+
+
+42 ^^^ 58

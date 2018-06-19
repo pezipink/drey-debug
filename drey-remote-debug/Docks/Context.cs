@@ -162,10 +162,32 @@ namespace drey_remote_debug.Docks
 
         public void ShowObject(Object obj)
         {
-            if(obj is KeyValuePair<string,ObjectType> kvp2)
+            
+            if (obj is KeyValuePair<string, ObjectType> kvp2)
             {
                 obj = kvp2.Value;
             }
+
+            if (obj is KeyValuePair<int, GameObject> kvp3)
+            {
+                obj = kvp3.Value;
+            }
+
+            if (obj is KeyValuePair<int, GameObjectReference> kvp4)
+            {
+                obj = DebuggerUI.ZMB.GameState.GameObjectLookup[kvp4.Value.ID];
+            }
+
+            if (obj is KeyValuePair<string, GameObjectReference> kvp5)
+            {
+                obj = DebuggerUI.ZMB.GameState.GameObjectLookup[kvp5.Value.ID];
+            }
+
+            if (obj is GameObjectReference gor)
+            {
+                obj = DebuggerUI.ZMB.GameState.GameObjectLookup[gor.ID];
+            }
+
             if (obj is ScopeWrapper sw)
             {
                 obj = sw.Type;
@@ -175,8 +197,7 @@ namespace drey_remote_debug.Docks
                 obj = arr.Values;
             }
 
-            
-
+            _statusBar.Text = obj.GetType().Name;
             if (obj is Scope s)
             {
                 _grid.ContextMenuStrip.Items.Clear();
@@ -235,6 +256,14 @@ namespace drey_remote_debug.Docks
                 _grid.ContextMenuStrip.Items.Clear();
                 _grid.DataSource = go.Props.ToArray();
                 _currentType = ContextType.Function;
+                _statusBar.Text = $"GameObject {go.ID}";
+            }
+            else if (obj is GameObjectReference gor3)
+            {
+                _grid.ContextMenuStrip.Items.Clear();
+                _grid.DataSource = DebuggerUI.ZMB.GameState.GameObjectLookup[gor3.ID].Props.ToArray();
+                _currentType = ContextType.Function;
+                _statusBar.Text = $"GameObject {gor3.ID}";
             }
             else if (obj is ObjectType o)
             {
@@ -245,6 +274,11 @@ namespace drey_remote_debug.Docks
             else if (obj is ContextWrapper cw)
             {
                 this.ShowObject(cw.Link);
+            }
+            else if(obj is Dictionary<int, GameObject> god)  // game object dict
+            {
+                _grid.ContextMenuStrip.Items.Clear();
+                _grid.DataSource = god.ToArray() ;
             }
             else if (obj is List<ObjectType>)
             {
@@ -272,6 +306,12 @@ namespace drey_remote_debug.Docks
                     {
                         items.Add(new ContextWrapper() { Kind = "Function", Value = string.Format("{0:X}", f2.Address), Link = f2 });
                     }
+
+                    else if (ot is DreyZ.GameObjectReference gor2)
+                    {
+                        items.Add(new ContextWrapper() { Kind = "GameObject", Value = gor2.ID.ToString(), Link = DebuggerUI.ZMB.GameState.GameObjectLookup[gor2.ID] });
+                    }
+
                     else
                     {
                         items.Add(new ContextWrapper() { Kind = ot.GetType().Name, Value = "Not Implemented", Link = ot });
@@ -287,7 +327,12 @@ namespace drey_remote_debug.Docks
 
         internal void RefreshContextDataSource()
         {
+            var selected = _childCombo.ComboBox.SelectedValue;
             _childCombo.ComboBox.DataSource = DebuggerUI.ContextContentDataSource;
+            if (selected != null)
+            {
+                _childCombo.ComboBox.SelectedValue = selected;
+            }
         }
 
         protected override void OnClosed(EventArgs e)
